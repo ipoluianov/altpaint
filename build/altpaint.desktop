@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=AltPaint
+Comment=Image editor
+Exec=altpaint %F
+Icon=altpaint
+Terminal=false
+Categories=Graphics;2DGraphics;RasterGraphics;
+StartupNotify=false
+MimeType=image/png;image/jpeg;image/bmp;image/gif;image/tiff;image/webp;

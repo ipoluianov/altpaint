@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Solid tile in the AltBins style, the glyph inside in white -->
+  <rect x="8" y="8" width="240" height="240" rx="44" fill="#e8590c"/>
+  <!-- A brush: the handle going up to the right, the tip with a stroke of paint;
+       simple shapes, so it reads at 16x16 -->
+  <path d="M196 44c10-6 22 6 16 16l-70 90-36-36z" fill="#fff"/>
+  <path d="M98 126l34 34c-4 34-36 52-84 48 18-14 14-30 20-46 6-20 18-32 30-36z" fill="#fff"/>
+</svg>

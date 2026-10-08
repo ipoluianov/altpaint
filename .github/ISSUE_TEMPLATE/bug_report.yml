@@ -1,0 +1,50 @@
+name: Bug report
+description: Something does not work as it should
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead. A screenshot helps.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: AltPaint version
+      description: Shown in About.
+      placeholder: v0.0.19
+    validations:
+      required: true
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+    validations:
+      required: true
+  - type: input
+    id: os-details
+    attributes:
+      label: OS version and desktop
+      description: For Linux, also the distribution and the desktop (GNOME, KDE...), and X11 or Wayland.
+      placeholder: Ubuntu 24.04, GNOME, Wayland
+  - type: dropdown
+    id: install
+    attributes:
+      label: How it was installed
+      options:
+        - Downloaded exe / installed from it (Windows)
+        - .dmg (macOS)
+        - .deb / .rpm package (Linux)
+        - linux-install.sh (Linux)
+        - Built from source
+  - type: textarea
+    id: image
+    attributes:
+      label: The image
+      description: The file type and size, the tool and its options if they matter. Attach the image if you can share it.

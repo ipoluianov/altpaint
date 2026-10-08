@@ -1,0 +1,37 @@
+# nfpm config for the .deb and .rpm packages, used by _build.sh/_build.bat.
+# Paths are relative to the repo root; ${...} comes from the environment.
+# nfpm does not expand variables in src, so the binary is staged in bin/.pkg/.
+name: altpaint
+arch: ${PKG_ARCH}
+platform: linux
+version: ${PKG_VERSION}
+section: graphics
+priority: optional
+maintainer: Ivan Poluianov <ipoluyanov@gmail.com>
+description: AltPaint - image editor.
+homepage: https://github.com/ipoluianov/altpaint
+license: MIT
+
+contents:
+  - src: bin/.pkg/altpaint
+    dst: /usr/bin/altpaint
+    file_info:
+      mode: 0755
+  - src: build/altpaint.desktop
+    dst: /usr/share/applications/altpaint.desktop
+  - src: icon.svg
+    dst: /usr/share/icons/hicolor/scalable/apps/altpaint.svg
+  - src: icon.png
+    dst: /usr/share/icons/hicolor/256x256/apps/altpaint.png
+
+scripts:
+  preremove: build/preremove.sh
+
+# nui loads these with dlopen at runtime; only libX11 is mandatory
+overrides:
+  deb:
+    depends: [libx11-6]
+    recommends: [libxext6, libxinerama1, libfreetype6]
+  rpm:
+    depends: [libX11]
+    recommends: [libXext, libXinerama, freetype]
