@@ -50,6 +50,8 @@ type Document struct {
 	composite *image.RGBA
 	dirty     image.Rectangle
 	version   int
+	// viewDirty is what changed since the view last drew the image, see TakeViewDirty
+	viewDirty image.Rectangle
 
 	// floating holds the pixels lifted by the Move Selected tool, see move.go
 	floating *floating
@@ -109,14 +111,25 @@ func (d *Document) Touch() {
 
 // Invalidate marks the area of the composite image to be drawn again
 func (d *Document) Invalidate(r image.Rectangle) {
-	d.dirty = d.dirty.Union(r.Intersect(d.Bounds()))
+	r = r.Intersect(d.Bounds())
+	d.dirty = d.dirty.Union(r)
+	d.viewDirty = d.viewDirty.Union(r)
 	d.version++
 }
 
 // InvalidateAll marks the whole composite image to be drawn again
 func (d *Document) InvalidateAll() {
 	d.dirty = d.Bounds()
+	d.viewDirty = d.Bounds()
 	d.version++
+}
+
+// TakeViewDirty returns the area of the image that changed since the last
+// call, so a view draws again only that part
+func (d *Document) TakeViewDirty() image.Rectangle {
+	r := d.viewDirty
+	d.viewDirty = image.Rectangle{}
+	return r
 }
 
 // Composite returns the layers drawn one over another; it is updated where

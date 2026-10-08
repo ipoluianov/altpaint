@@ -17,10 +17,12 @@ type StatusBar struct {
 	main *MainForm
 
 	lblHint   *ui.Label
-	lblCursor *ui.Label
-	lblSel    *ui.Label
-	lblSize   *ui.Label
+	lblCursor *statusCell
+	lblSel    *statusCell
+	lblSize   *statusCell
 	zoom      *ui.ComboBox
+	zoomIndex int // shown in the zoom box, -1 - none yet
+	zoomFirst string
 
 	// What the install link does: install, update or uninstall
 	installStatus install.Status
@@ -49,18 +51,16 @@ func NewStatusBar(main *MainForm) *StatusBar {
 	c.lblHint.SetXExpandable(true)
 	c.lblHint.SetForegroundColor(colorMuted.get())
 	add(c.lblHint)
-	c.lblCursor = ui.NewLabel("")
-	c.lblCursor.SetMinWidth(110)
+	c.lblCursor = newStatusCell(90)
 	add(c.lblCursor)
 	gap(8)
-	c.lblSel = ui.NewLabel("")
-	c.lblSel.SetMinWidth(110)
+	c.lblSel = newStatusCell(170)
 	add(c.lblSel)
 	gap(8)
-	c.lblSize = ui.NewLabel("")
-	c.lblSize.SetMinWidth(110)
+	c.lblSize = newStatusCell(170)
 	add(c.lblSize)
 	gap(8)
+	c.zoomIndex = -1
 	c.zoom = ui.NewComboBox()
 	c.zoom.SetMinWidth(90)
 	c.zoom.SetOnSelectedIndexChanged(c.onZoom)
@@ -94,6 +94,7 @@ func (c *StatusBar) fillZoom() {
 		items = append(items, percent(z*100))
 	}
 	fillCombo(c.zoom, items...)
+	c.zoomIndex = -1
 }
 
 func (c *StatusBar) onZoom() {
@@ -109,8 +110,11 @@ func (c *StatusBar) onZoom() {
 
 // Refresh shows the state of the current image and the mouse
 func (c *StatusBar) Refresh() {
-	c.lblHint.SetText(T().ToolHint(tools.Tool))
-	c.lblHint.SetForegroundColor(colorMuted.get())
+	// A label lays the window out again when its text is set, so only a change is set
+	if hint := T().ToolHint(tools.Tool); c.lblHint.Text() != hint {
+		c.lblHint.SetText(hint)
+		c.lblHint.SetForegroundColor(colorMuted.get())
+	}
 	d := c.main.doc()
 	if d == nil {
 		c.lblCursor.SetText("")
@@ -147,14 +151,51 @@ func (c *StatusBar) Refresh() {
 			}
 		}
 	}
-	if idx >= 0 {
+	first := T().ZoomWindow
+	if idx < 0 {
+		idx, first = 0, percent(z*100)
+	}
+	if c.zoom.SelectedIndex() != idx || c.zoomIndex != idx || c.zoomFirst != first {
+		c.zoom.SetItemText(0, first)
 		c.zoom.SetSelectedIndex(idx)
-	} else {
-		c.zoom.SetItemText(0, percent(z*100))
-		c.zoom.SetSelectedIndex(0)
+		c.zoomIndex, c.zoomFirst = idx, first
+	}
+}
+
+// statusCell is a text of the status bar that changes often, e.g. with the
+// mouse: it has a fixed width and is just repainted, as a label would lay
+// the window out again on every change
+type statusCell struct {
+	ui.Widget
+	text string
+}
+
+func newStatusCell(width int) *statusCell {
+	var c statusCell
+	c.InitWidget()
+	c.SetMinWidth(width)
+	c.SetMaxWidth(width)
+	c.SetMinHeight(ui.ThemeControlHeight())
+	c.SetMaxHeight(ui.ThemeControlHeight())
+	c.SetOnPaint(func(cnv *ui.Canvas) {
+		cnv.SetHAlign(ui.HAlignLeft)
+		cnv.SetVAlign(ui.VAlignCenter)
+		cnv.SetFontFamily(ui.ThemeFontFamily())
+		cnv.SetFontSize(ui.ThemeFontSize())
+		cnv.SetColor(ui.CurrentPalette().WindowText)
+		cnv.DrawText(0, 0, c.Width(), c.Height(), c.text)
+	})
+	return &c
+}
+
+func (c *statusCell) SetText(text string) {
+	if c.text == text {
 		return
 	}
-	c.zoom.SetItemText(0, T().ZoomWindow)
+	c.text = text
+	if f := c.Form(); f != nil {
+		f.Update()
+	}
 }
 
 // newLinkLabel creates a hyperlink-style label with the text from text() that calls onClick on left click.

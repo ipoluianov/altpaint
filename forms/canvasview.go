@@ -3,11 +3,11 @@ package forms
 import (
 	"image"
 	"image/color"
+	"image/draw"
 	"math"
 
 	"github.com/ipoluianov/altpaint/paint"
 	"github.com/ipoluianov/nui/ui"
-	xdraw "golang.org/x/image/draw"
 )
 
 // DocTab is an open image with the way it is shown
@@ -37,7 +37,6 @@ const (
 // viewKey is what the picture of the view depends on, besides the overlays
 type viewKey struct {
 	doc              *paint.Document
-	version          int
 	zoom             float64
 	scrollX, scrollY int
 	w, h             int
@@ -278,86 +277,185 @@ func (c *CanvasView) paint(cnv *ui.Canvas) {
 		return
 	}
 	c.syncContent()
-	key := viewKey{c.doc(), c.doc().Version(), c.zoom(), sx, sy, w, h, ui.IsDarkTheme}
+	d := c.doc()
+	key := viewKey{d, c.zoom(), sx, sy, w, h, ui.IsDarkTheme}
 	if key != c.bufKey || c.buf == nil {
-		c.render(sx, sy, w, h)
+		// Another image, zoom, scroll or size: all is drawn again
+		d.TakeViewDirty()
+		c.render(image.Rect(0, 0, w, h))
 		c.bufKey = key
+	} else if r := d.TakeViewDirty(); !r.Empty() {
+		// Only what changed, e.g. under the brush
+		c.render(c.screenRect(r))
 	}
-	cnv.DrawImage(sx, sy, c.buf)
+	blit(cnv, sx, sy, c.buf)
 	c.paintOverlays(cnv)
 }
 
-// render draws the visible part of the image over the checkers into buf
-func (c *CanvasView) render(sx, sy, w, h int) {
-	if c.buf == nil || c.buf.Rect.Dx() != w || c.buf.Rect.Dy() != h {
+// blit draws the opaque image at (x, y): copied, not blended, which is what
+// takes most of the time of a frame otherwise
+func blit(cnv *ui.Canvas, x, y int, img *image.RGBA) {
+	if cnv.Scale() != 1 {
+		cnv.DrawImage(x, y, img)
+		return
+	}
+	dst := cnv.RGBA()
+	at := image.Pt(x+cnv.TranslatedX(), y+cnv.TranslatedY())
+	clip := image.Rect(cnv.ClipX(), cnv.ClipY(), cnv.ClipX()+cnv.ClipW(), cnv.ClipY()+cnv.ClipH())
+	r := image.Rectangle{Min: at, Max: at.Add(img.Rect.Size())}.Intersect(clip).Intersect(dst.Rect)
+	if r.Empty() {
+		return
+	}
+	draw.Draw(dst, r, img, r.Min.Sub(at), draw.Src)
+}
+
+// screenRect returns the pixels of buf that show the area of the image
+func (c *CanvasView) screenRect(r image.Rectangle) image.Rectangle {
+	z := c.zoom()
+	left, top := c.imageScreenOrigin()
+	return image.Rect(
+		int(math.Floor(left+float64(r.Min.X)*z))-1, int(math.Floor(top+float64(r.Min.Y)*z))-1,
+		int(math.Ceil(left+float64(r.Max.X)*z))+1, int(math.Ceil(top+float64(r.Max.Y)*z))+1)
+}
+
+// imageScreenOrigin returns where the image starts in buf (in the window)
+func (c *CanvasView) imageScreenOrigin() (float64, float64) {
+	ox, oy := c.origin()
+	return ox - float64(c.ScrollX()), oy - float64(c.ScrollY())
+}
+
+// render draws the area of buf (window coordinates): the image over the
+// checkers, the workspace around it. Each pixel of buf depends only on its
+// position, so drawing a part gives the same as drawing all.
+func (c *CanvasView) render(area image.Rectangle) {
+	w, h := c.Width(), c.Height()
+	if c.buf == nil || c.buf.Rect.Dx() != max(1, w) || c.buf.Rect.Dy() != max(1, h) {
 		c.buf = image.NewRGBA(image.Rect(0, 0, max(1, w), max(1, h)))
+		area = c.buf.Rect
 	}
 	buf := c.buf
-	ws := colorWorkspace.get()
-	for i := 0; i < len(buf.Pix); i += 4 {
-		buf.Pix[i], buf.Pix[i+1], buf.Pix[i+2], buf.Pix[i+3] = ws.R, ws.G, ws.B, 255
+	area = area.Intersect(buf.Rect)
+	if area.Empty() {
+		return
 	}
 	d := c.doc()
 	comp := d.Composite()
 	z := c.zoom()
-	ox, oy := c.origin()
-	// The image on the screen (the buf coordinates)
-	left, top := ox-float64(sx), oy-float64(sy)
-	vis := image.Rect(int(math.Floor(left)), int(math.Floor(top)),
-		int(math.Ceil(left+float64(d.W)*z)), int(math.Ceil(top+float64(d.H)*z))).Intersect(buf.Rect)
+	left, top := c.imageScreenOrigin()
+	il, it := int(math.Floor(left)), int(math.Floor(top))
+	img := image.Rect(il, it, int(math.Ceil(left+float64(d.W)*z)), int(math.Ceil(top+float64(d.H)*z)))
+	vis := img.Intersect(area)
+
+	// The workspace: the rows above and below the image, and beside it
+	ws := colorWorkspace.get()
+	wsPix := [4]uint8{ws.R, ws.G, ws.B, 255}
+	for y := area.Min.Y; y < area.Max.Y; y++ {
+		x0, x1 := area.Min.X, area.Max.X
+		if y >= vis.Min.Y && y < vis.Max.Y {
+			fillRow(buf, y, x0, vis.Min.X, wsPix)
+			fillRow(buf, y, vis.Max.X, x1, wsPix)
+		} else {
+			fillRow(buf, y, x0, x1, wsPix)
+		}
+	}
 	if vis.Empty() {
 		return
 	}
-	checker := func(x, y int) uint32 {
-		if ((x-int(left))/checkerSize+(y-int(top))/checkerSize)%2 == 0 {
-			return uint32(colorCheckerLight.R)
-		}
-		return uint32(colorCheckerDark.R)
-	}
-	put := func(di int, p []uint8, x, y int) {
-		bg := checker(x, y)
-		inv := 255 - uint32(p[3])
-		buf.Pix[di] = uint8(uint32(p[0]) + bg*inv/255)
-		buf.Pix[di+1] = uint8(uint32(p[1]) + bg*inv/255)
-		buf.Pix[di+2] = uint8(uint32(p[2]) + bg*inv/255)
-		buf.Pix[di+3] = 255
+
+	// The checkers: light or dark by the square of the column and of the row
+	light, dark := uint32(colorCheckerLight.R), uint32(colorCheckerDark.R)
+	colOdd := make([]bool, vis.Dx())
+	for i := range colOdd {
+		colOdd[i] = ((vis.Min.X+i-il)/checkerSize)%2 == 1
 	}
 
 	if z >= 1 {
 		// Each pixel of the image is a square of the screen
 		cols := make([]int, vis.Dx())
 		for i := range cols {
-			ix := int((float64(vis.Min.X+i) - left) / z)
-			cols[i] = max(0, min(d.W-1, ix)) * 4
+			cols[i] = max(0, min(d.W-1, int((float64(vis.Min.X+i)-left)/z))) * 4
 		}
 		for y := vis.Min.Y; y < vis.Max.Y; y++ {
 			iy := max(0, min(d.H-1, int((float64(y)-top)/z)))
-			row := comp.Pix[iy*comp.Stride:]
-			di := buf.PixOffset(vis.Min.X, y)
+			row := comp.Pix[iy*comp.Stride : iy*comp.Stride+d.W*4]
+			out := buf.Pix[buf.PixOffset(vis.Min.X, y):buf.PixOffset(vis.Max.X, y)]
+			rowOdd := ((y-it)/checkerSize)%2 == 1
 			for i, si := range cols {
-				put(di+i*4, row[si:si+4:si+4], vis.Min.X+i, y)
+				p := row[si : si+4 : si+4]
+				o := out[i*4 : i*4+4 : i*4+4]
+				if p[3] == 255 {
+					o[0], o[1], o[2], o[3] = p[0], p[1], p[2], 255
+					continue
+				}
+				bg := light
+				if colOdd[i] != rowOdd {
+					bg = dark
+				}
+				inv := 255 - uint32(p[3])
+				k := bg * inv / 255
+				o[0], o[1], o[2], o[3] = uint8(uint32(p[0])+k), uint8(uint32(p[1])+k), uint8(uint32(p[2])+k), 255
 			}
 		}
 		return
 	}
 
-	// Zoomed out: the visible part is scaled down with filtering
-	src := image.Rect(int(math.Floor((float64(vis.Min.X)-left)/z)), int(math.Floor((float64(vis.Min.Y)-top)/z)),
-		int(math.Ceil((float64(vis.Max.X)-left)/z)), int(math.Ceil((float64(vis.Max.Y)-top)/z))).Intersect(comp.Rect)
-	dst := image.Rect(int(math.Round(left+float64(src.Min.X)*z)), int(math.Round(top+float64(src.Min.Y)*z)),
-		int(math.Round(left+float64(src.Max.X)*z)), int(math.Round(top+float64(src.Max.Y)*z)))
-	if dst.Empty() {
+	// Zoomed out: each pixel of the screen is the average of the pixels of
+	// the image it covers
+	type span struct{ a, b int }
+	colSpan := make([]span, vis.Dx())
+	for i := range colSpan {
+		x := float64(vis.Min.X + i)
+		a := max(0, min(d.W-1, int(math.Floor((x-left)/z))))
+		b := max(a+1, min(d.W, int(math.Floor((x+1-left)/z))))
+		colSpan[i] = span{a, b}
+	}
+	sums := make([]uint32, 4*d.W)
+	for y := vis.Min.Y; y < vis.Max.Y; y++ {
+		fy := float64(y)
+		ya := max(0, min(d.H-1, int(math.Floor((fy-top)/z))))
+		yb := max(ya+1, min(d.H, int(math.Floor((fy+1-top)/z))))
+		// The sums of the columns of the rows this screen row covers
+		x0, x1 := colSpan[0].a, colSpan[len(colSpan)-1].b
+		clear(sums[x0*4 : x1*4])
+		for iy := ya; iy < yb; iy++ {
+			row := comp.Pix[iy*comp.Stride:]
+			for j := x0 * 4; j < x1*4; j++ {
+				sums[j] += uint32(row[j])
+			}
+		}
+		out := buf.Pix[buf.PixOffset(vis.Min.X, y):buf.PixOffset(vis.Max.X, y)]
+		rowOdd := ((y-it)/checkerSize)%2 == 1
+		rows := uint32(yb - ya)
+		for i, sp := range colSpan {
+			var r, g, b, a uint32
+			for j := sp.a * 4; j < sp.b*4; j += 4 {
+				r += sums[j]
+				g += sums[j+1]
+				b += sums[j+2]
+				a += sums[j+3]
+			}
+			n := rows * uint32(sp.b-sp.a)
+			r, g, b, a = r/n, g/n, b/n, a/n
+			bg := light
+			if colOdd[i] != rowOdd {
+				bg = dark
+			}
+			k := bg * (255 - a) / 255
+			o := out[i*4 : i*4+4 : i*4+4]
+			o[0], o[1], o[2], o[3] = uint8(r+k), uint8(g+k), uint8(b+k), 255
+		}
+	}
+}
+
+// fillRow fills the pixels x0..x1 of the row with the color
+func fillRow(img *image.RGBA, y, x0, x1 int, col [4]uint8) {
+	if x0 >= x1 {
 		return
 	}
-	tmp := image.NewRGBA(dst)
-	xdraw.BiLinear.Scale(tmp, dst, comp, src, xdraw.Src, nil)
-	dst = dst.Intersect(buf.Rect)
-	for y := dst.Min.Y; y < dst.Max.Y; y++ {
-		di := buf.PixOffset(dst.Min.X, y)
-		ti := tmp.PixOffset(dst.Min.X, y)
-		for x := dst.Min.X; x < dst.Max.X; x, di, ti = x+1, di+4, ti+4 {
-			put(di, tmp.Pix[ti:ti+4:ti+4], x, y)
-		}
+	row := img.Pix[img.PixOffset(x0, y):img.PixOffset(x1, y)]
+	copy(row[:4], col[:])
+	for filled := 4; filled < len(row); filled *= 2 {
+		copy(row[filled:], row[:filled])
 	}
 }
 
